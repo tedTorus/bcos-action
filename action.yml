@@ -48,7 +48,8 @@ runs:
         TIER: ${{ inputs.tier }}
         REVIEWER: ${{ inputs.reviewer }}
       run: |
-        import os, json
+        import os, json, sys
+        sys.path.append(os.getcwd())
         from bcos_engine import BCOSEngine
         engine = BCOSEngine(".", tier=os.environ.get("TIER", "L1"), reviewer=os.environ.get("REVIEWER", ""))
         report = engine.run_all()
