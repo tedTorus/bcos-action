@@ -43,21 +43,23 @@ runs:
 
     - name: Run BCOS Engine
       id: bcos
-      shell: python
+      shell: bash
       env:
         TIER: ${{ inputs.tier }}
         REVIEWER: ${{ inputs.reviewer }}
       run: |
+        python -c '
         import os, json, sys
-        sys.path.append(os.getcwd())
+        sys.path.insert(0, os.getcwd())
         from bcos_engine import BCOSEngine
         engine = BCOSEngine(".", tier=os.environ.get("TIER", "L1"), reviewer=os.environ.get("REVIEWER", ""))
         report = engine.run_all()
         with open("bcos_report.json", "w") as f: json.dump(report, f)
         with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-            f.write(f"trust_score={report['trust_score']}\n")
-            f.write(f"cert_id={report['cert_id']}\n")
-            f.write(f"tier_met={report['tier_met']}\n")
+            f.write(f"trust_score={report.get(\"trust_score\")}\n")
+            f.write(f"cert_id={report.get(\"cert_id\")}\n")
+            f.write(f"tier_met={report.get(\"tier_met\")}\n")
+        '
 
     - name: Format PR Comment
       shell: bash
