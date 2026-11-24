@@ -1,0 +1,98 @@
+name: 'BCOS v2 Verification'
+description: 'Runs BCOS v2 engine and posts PR comment / anchors to RustChain'
+inputs:
+  tier:
+    description: 'BCOS Tier (L0, L1, L2)'
+    required: true
+    default: 'L1'
+  reviewer:
+    description: 'Reviewer name/ID'
+    required: false
+    default: ''
+  node-url:
+    description: 'RustChain node URL for anchoring'
+    required: true
+    default: 'https://rustchain.org'
+  github-token:
+    description: 'GitHub token for posting comments'
+    required: true
+outputs:
+  trust_score:
+    description: 'Calculated trust score'
+    value: ${{ steps.bcos.outputs.trust_score }}
+  cert_id:
+    description: 'BCOS Certification ID'
+    value: ${{ steps.bcos.outputs.cert_id }}
+  tier_met:
+    description: 'Whether the requested tier was met'
+    value: ${{ steps.bcos.outputs.tier_met }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Download BCOS Engine & Install Deps
+      shell: bash
+      run: |
+        curl -sSL https://raw.githubusercontent.com/Scottcjn/Rustchain/main/tools/bcos_engine.py -o bcos_engine.py
+        pip install pip-licenses
+
+    - name: Run BCOS Engine
+      id: bcos
+      shell: python
+      env:
+        TIER: ${{ inputs.tier }}
+        REVIEWER: ${{ inputs.reviewer }}
+      run: |
+        import os, json
+        from bcos_engine import BCOSEngine
+        engine = BCOSEngine(".", tier=os.environ.get("TIER", "L1"), reviewer=os.environ.get("REVIEWER", ""))
+        report = engine.run_all()
+        with open("bcos_report.json", "w") as f: json.dump(report, f)
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"trust_score={report['trust_score']}\n")
+            f.write(f"cert_id={report['cert_id']}\n")
+            f.write(f"tier_met={report['tier_met']}\n")
+
+    - name: Format PR Comment
+      shell: bash
+      run: |
+        TRUST_SCORE=$(jq -r '.trust_score' bcos_report.json)
+        CERT_ID=$(jq -r '.cert_id' bcos_report.json)
+        TIER_MET=$(jq -r '.tier_met' bcos_report.json)
+        echo "### BCOS v2 Verification 🛡️" > comment.md
+        echo "**Tier Requested:** ${{ inputs.tier }} | **Score:** $TRUST_SCORE/100 | **Tier Met:** $TIER_MET" >> comment.md
+        echo "**Certification ID:** \`$CERT_ID\`" >> comment.md
+        echo "<details><summary>Score Breakdown</summary>" >> comment.md
+        echo "" >> comment.md
+        echo '```json' >> comment.md
+        jq '.score_breakdown' bcos_report.json >> comment.md
+        echo '```' >> comment.md
+        echo "</details>" >> comment.md
+
+    - name: Post PR Comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          const body = fs.readFileSync('comment.md', 'utf8');
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          })
+
+    - name: Anchor to RustChain
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      shell: bash
+      run: |
+        CERT_ID=$(jq -r '.cert_id' bcos_report.json)
+        COMMITMENT=$(jq -r '.commitment' bcos_report.json)
+        curl -X POST "${{ inputs.node-url }}/bcos/anchor" -H "Content-Type: application/json" -d "{\"cert_id\": \"$CERT_ID\", \"commitment\": \"$COMMITMENT\"}" || true
